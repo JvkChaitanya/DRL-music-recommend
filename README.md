@@ -161,6 +161,7 @@ rl:
 ## Dataset
 
 **Last.fm-1K** dataset:
+- Access: [http://ocelma.net/MusicRecommendationDataset/lastfm-1K.html](http://ocelma.net/MusicRecommendationDataset/lastfm-1K.html)
 - 19.1M listening events
 - 992 users
 - 1M+ unique tracks
