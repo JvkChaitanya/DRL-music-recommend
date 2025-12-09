@@ -113,26 +113,50 @@ class MusicRecommendationEnv:
     
     def _compute_reward(self, action: int) -> float:
         """
-        Compute reward for recommending a track.
+        Compute reward for recommending a track with enhanced shaping.
         
         Reward components:
-        - Hit bonus: If action matches ground truth
-        - History match: If track is in user's history (they like it)
-        - Diversity bonus: If track is different genre (exploration)
+        1. Exact hit bonus (1.0)
+        2. Ranking-based reward (based on similarity to ground truth)
+        3. User history match (0.3)
+        4. Diversity bonus (exploration)
+        5. Novelty penalty (avoid repetition)
         """
         reward = 0.0
         
-        # Hit bonus (predicted exactly what user listened to)
+        # 1. Exact hit bonus (predicted exactly what user listened to)
         if action == self.ground_truth:
             reward += 1.0
+            return reward  # Perfect prediction, return immediately
         
-        # User history match (user has listened to this before)
-        if action in self.user_histories.get(self.current_user, set()):
-            reward += 0.3
+        # 2. Ranking-based reward: Partial credit for "close" recommendations
+        # This helps the agent learn even when not hitting exactly
+        user_history_items = list(self.user_histories.get(self.current_user, set()))
+        if len(user_history_items) > 0:
+            # Check if action is similar to ground truth based on co-occurrence
+            # Items the user likes together tend to be similar
+            if action in user_history_items:
+                # Give partial credit based on how popular this item is in user's history
+                history_frequency = user_history_items.count(action)
+                reward += 0.3 + min(0.2, history_frequency * 0.05)  # Up to 0.5 total
         
-        # Novelty penalty for recommending recently played
-        if action in self.current_sequence[-5:]:
-            reward -= 0.2  # Penalty for repetition
+        # 3. Diversity bonus: Reward exploring different items
+        # But penalize if too dissimilar from user's taste
+        recent_items = set(self.current_sequence[-10:])
+        if action not in recent_items:
+            # Novel item - small exploration bonus
+            reward += 0.1
+        
+        # 4. Novelty penalty for recommending very recently played
+        if action in self.current_sequence[-3:]:
+            reward -= 0.3  # Strong penalty for immediate repetition
+        elif action in self.current_sequence[-5:]:
+            reward -= 0.1  # Mild penalty for recent repetition
+        
+        # 5. Popularity baseline: Small penalty for recommending items
+        # user has never interacted with (but not too harsh to allow exploration)
+        if action not in user_history_items and len(user_history_items) > 0:
+            reward -= 0.05
         
         return reward
     

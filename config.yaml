@@ -5,6 +5,8 @@ data:
   min_seq_length: 5
   max_seq_length: 50
   session_gap_minutes: 30
+  sample_ratio: 0.5  # Use 50% of users (strategic sampling to preserve sequential data)
+  quiet_mode: true   # Reduce verbose output
 
 # Model - SASRec
 sasrec:

@@ -19,9 +19,13 @@ class Actor(nn.Module):
     
     def __init__(self, state_dim: int, hidden_dim: int = 128):
         super().__init__()
+        # Deeper network with layer normalization (works with batch size 1)
         self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.ln1 = nn.LayerNorm(hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, state_dim)  # Project to embedding space
+        self.ln2 = nn.LayerNorm(hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, hidden_dim // 2)
+        self.fc4 = nn.Linear(hidden_dim // 2, state_dim)  # Project to embedding space
     
     def forward(self, state: torch.Tensor) -> torch.Tensor:
         """
@@ -33,9 +37,10 @@ class Actor(nn.Module):
         Returns:
             action_emb: (batch, state_dim) action preference in embedding space
         """
-        x = F.relu(self.fc1(state))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)
+        x = F.relu(self.ln1(self.fc1(state)))
+        x = F.relu(self.ln2(self.fc2(x)))
+        x = F.relu(self.fc3(x))
+        return self.fc4(x)
     
     def select_action(
         self,
@@ -109,10 +114,12 @@ class ActorCriticAgent:
         actor_lr: float = 0.0001,
         critic_lr: float = 0.001,
         gamma: float = 0.99,
+        entropy_coef: float = 0.01,
         device: str = 'cpu'
     ):
         self.device = device
         self.gamma = gamma
+        self.entropy_coef = entropy_coef
         
         # Networks
         self.actor = Actor(state_dim, hidden_dim).to(device)
@@ -125,6 +132,7 @@ class ActorCriticAgent:
         # Training history
         self.saved_log_probs = []
         self.saved_values = []
+        self.saved_entropies = []
         self.rewards = []
     
     def select_action(
@@ -157,9 +165,16 @@ class ActorCriticAgent:
             temperature
         )
         
+        # Compute entropy for exploration bonus
+        action_pref = self.actor(state_embedding.unsqueeze(0)).squeeze(0)
+        scores = torch.matmul(candidate_embeddings, action_pref) / temperature
+        probs = F.softmax(scores, dim=0)
+        entropy = -(probs * torch.log(probs + 1e-10)).sum()
+        
         # Store for training
         self.saved_log_probs.append(log_prob)
         self.saved_values.append(value)
+        self.saved_entropies.append(entropy)
         
         return action_idx
     
@@ -193,11 +208,16 @@ class ActorCriticAgent:
         # Compute losses
         actor_loss = 0
         critic_loss = 0
+        entropy_loss = 0
         
-        for log_prob, value, R in zip(self.saved_log_probs, self.saved_values, returns):
+        for log_prob, value, entropy, R in zip(self.saved_log_probs, self.saved_values, self.saved_entropies, returns):
             advantage = R - value.item()
             actor_loss -= log_prob * advantage
-            critic_loss += F.mse_loss(value.squeeze(), R.unsqueeze(0))
+            critic_loss += F.mse_loss(value.squeeze(), R)
+            entropy_loss -= entropy  # Negative because we want to maximize entropy
+        
+        # Add entropy regularization to actor loss
+        actor_loss += self.entropy_coef * entropy_loss
         
         # Update actor
         self.actor_optimizer.zero_grad()
@@ -212,6 +232,7 @@ class ActorCriticAgent:
         # Clear buffers
         self.saved_log_probs = []
         self.saved_values = []
+        self.saved_entropies = []
         self.rewards = []
         
         return actor_loss.item(), critic_loss.item()
